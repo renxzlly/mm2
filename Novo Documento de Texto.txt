@@ -1,0 +1,376 @@
+--[[
+    ESP com papéis + UI básica para MM2 · executor Lua (Drawing + Instances)
+    - caixa/nome em todos os jogadores, atravessando parede
+    - assassino (Knife) vermelho · xerife (Gun) azul · inocente verde
+    - janela arrastável com toggle do ESP e legenda
+    - INSERT também liga/desliga
+]]
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UIS = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+
+local LocalPlayer = Players.LocalPlayer
+local Camera = workspace.CurrentCamera
+
+-- =====================================================================
+-- UI básica
+-- =====================================================================
+local Lib = {}
+Lib.__index = Lib
+
+local PALETTE = {
+    bg = Color3.fromRGB(22, 17, 34),
+    card = Color3.fromRGB(31, 24, 48),
+    stroke = Color3.fromRGB(58, 47, 88),
+    text = Color3.fromRGB(239, 230, 255),
+    muted = Color3.fromRGB(165, 143, 196),
+    accent = Color3.fromRGB(162, 89, 255),
+    pink = Color3.fromRGB(255, 122, 217),
+}
+
+local function corner(parent, radius)
+    local c = Instance.new("UICorner")
+    c.CornerRadius = UDim.new(0, radius or 8)
+    c.Parent = parent
+    return c
+end
+
+local function stroke(parent, color, thickness)
+    local s = Instance.new("UIStroke")
+    s.Color = color or PALETTE.stroke
+    s.Thickness = thickness or 1
+    s.Parent = parent
+    return s
+end
+
+local function label(parent, text, size, color, pos)
+    local l = Instance.new("TextLabel")
+    l.BackgroundTransparency = 1
+    l.Text = text
+    l.TextSize = size or 14
+    l.TextColor3 = color or PALETTE.text
+    l.Font = Enum.Font.GothamMedium
+    l.TextXAlignment = Enum.TextXAlignment.Left
+    l.Size = UDim2.new(1, -24, 0, 20)
+    l.Position = pos or UDim2.new(0, 12, 0, 0)
+    l.Parent = parent
+    return l
+end
+
+function Lib.window(title, subtitle)
+    local gui = Instance.new("ScreenGui")
+    gui.Name = "KuromiUI"
+    gui.ResetOnSpawn = false
+    gui.IgnoreGuiInset = true
+    gui.DisplayOrder = 999
+    gui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+
+    local main = Instance.new("Frame")
+    main.Size = UDim2.fromOffset(280, 210)
+    main.Position = UDim2.new(0, 40, 0, 120)
+    main.BackgroundColor3 = PALETTE.bg
+    main.BorderSizePixel = 0
+    main.Active = true
+    main.Parent = gui
+    corner(main, 12)
+    stroke(main, PALETTE.stroke, 1)
+
+    local bar = Instance.new("Frame")
+    bar.Size = UDim2.new(1, 0, 0, 38)
+    bar.BackgroundColor3 = PALETTE.card
+    bar.BorderSizePixel = 0
+    bar.Parent = main
+    corner(bar, 12)
+
+    local titleLabel = label(bar, title, 15, PALETTE.pink, UDim2.new(0, 14, 0, 8))
+    titleLabel.Font = Enum.Font.GothamBold
+    titleLabel.Size = UDim2.new(1, -28, 0, 22)
+
+    local sub = Instance.new("TextLabel")
+    sub.BackgroundTransparency = 1
+    sub.Text = subtitle or ""
+    sub.TextSize = 11
+    sub.TextColor3 = PALETTE.muted
+    sub.Font = Enum.Font.Gotham
+    sub.TextXAlignment = Enum.TextXAlignment.Left
+    sub.Size = UDim2.new(1, -28, 0, 12)
+    sub.Position = UDim2.new(0, 14, 0, 24)
+    sub.Parent = bar
+
+    -- arrastar
+    local dragging, dragStart, startPos = false, nil, nil
+    bar.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.Touch then
+            dragging, dragStart, startPos = true, input.Position, main.Position
+        end
+    end)
+    UIS.InputChanged:Connect(function(input)
+        if not dragging then return end
+        if input.UserInputType == Enum.UserInputType.MouseMovement
+            or input.UserInputType == Enum.UserInputType.Touch then
+            local delta = input.Position - dragStart
+            main.Position = UDim2.new(
+                startPos.X.Scale, startPos.X.Offset + delta.X,
+                startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+        end
+    end)
+    UIS.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = false
+        end
+    end)
+
+    local api = { gui = gui, frame = main, y = 48 }
+
+    function api.toggle(text, default, onChange)
+        local row = Instance.new("Frame")
+        row.Size = UDim2.new(1, -24, 0, 30)
+        row.Position = UDim2.fromOffset(12, api.y)
+        row.BackgroundTransparency = 1
+        row.Parent = main
+        api.y = api.y + 34
+
+        local name = label(row, text, 13, PALETTE.text, UDim2.new(0, 0, 0, 5))
+
+        local pill = Instance.new("Frame")
+        pill.Size = UDim2.fromOffset(40, 20)
+        pill.Position = UDim2.new(1, -40, 0, 5)
+        pill.BackgroundColor3 = default and PALETTE.accent or Color3.fromRGB(58, 47, 88)
+        pill.BorderSizePixel = 0
+        pill.Parent = row
+        corner(pill, 10)
+
+        local knob = Instance.new("Frame")
+        knob.Size = UDim2.fromOffset(16, 16)
+        knob.Position = UDim2.fromOffset(default and 22 or 2, 2)
+        knob.BackgroundColor3 = PALETTE.text
+        knob.BorderSizePixel = 0
+        knob.Parent = pill
+        corner(knob, 8)
+
+        local state = default
+        local click = Instance.new("TextButton")
+        click.Size = UDim2.fromScale(1, 1)
+        click.BackgroundTransparency = 1
+        click.Text = ""
+        click.Parent = row
+
+        click.MouseButton1Click:Connect(function()
+            state = not state
+            TweenService:Create(pill, TweenInfo.new(0.12),
+                { BackgroundColor3 = state and PALETTE.accent or Color3.fromRGB(58, 47, 88) }):Play()
+            TweenService:Create(knob, TweenInfo.new(0.12),
+                { Position = UDim2.fromOffset(state and 22 or 2, 2) }):Play()
+            onChange(state)
+        end)
+        return name
+    end
+
+    function api.legend(items)
+        local holder = Instance.new("Frame")
+        holder.Size = UDim2.new(1, -24, 0, #items * 16)
+        holder.Position = UDim2.fromOffset(12, api.y)
+        holder.BackgroundTransparency = 1
+        holder.Parent = main
+        api.y = api.y + #items * 16 + 6
+
+        for i, item in ipairs(items) do
+            local dot = Instance.new("Frame")
+            dot.Size = UDim2.fromOffset(9, 9)
+            dot.Position = UDim2.fromOffset(0, (i - 1) * 16 + 4)
+            dot.BackgroundColor3 = item.color
+            dot.BorderSizePixel = 0
+            dot.Parent = holder
+            corner(dot, 5)
+
+            local l = label(holder, item.text, 12, PALETTE.muted,
+                UDim2.fromOffset(16, (i - 1) * 16))
+            l.Size = UDim2.new(1, -16, 0, 16)
+        end
+    end
+
+    function api.destroy()
+        gui:Destroy()
+    end
+
+    return api
+end
+
+-- =====================================================================
+-- ESP
+-- =====================================================================
+local COLORS = {
+    murderer = Color3.fromRGB(255, 45, 63),
+    sheriff = Color3.fromRGB(45, 123, 255),
+    innocent = Color3.fromRGB(70, 217, 110),
+}
+local LABELS = { murderer = "FACA", sheriff = "ARMA", innocent = "" }
+local GUNS = { gun = true, guns = true, revolver = true, pistol = true }
+
+local enabled = true
+local show_names = true
+local roles, drawings = {}, {}
+local accumulator = 0
+
+local function toolRole(container)
+    if not container then return nil end
+    for _, item in ipairs(container:GetChildren()) do
+        local name = item.Name:lower()
+        if name == "knife" then return "murderer" end
+        if GUNS[name] then return "sheriff" end
+    end
+    return nil
+end
+
+local function refreshRoles()
+    for _, player in ipairs(Players:GetPlayers()) do
+        local role = toolRole(player.Character)
+            or toolRole(player:FindFirstChildOfClass("Backpack"))
+        if role then roles[player] = role end
+    end
+end
+
+local function make(player)
+    local d = drawings[player]
+    if d then return d end
+    d = { box = Drawing.new("Square"), name = Drawing.new("Text") }
+    d.box.Thickness = 1
+    d.box.Filled = false
+    d.name.Size = 14
+    d.name.Center = true
+    d.name.Outline = true
+    d.name.OutlineColor = Color3.new(0, 0, 0)
+    drawings[player] = d
+    return d
+end
+
+local function hide(player)
+    local d = drawings[player]
+    if d then
+        d.box.Visible = false
+        d.name.Visible = false
+    end
+end
+
+local function project(pos)
+    local screen = Camera:WorldToViewportPoint(pos)
+    if screen.Z <= 0 then return nil end
+    return Vector2.new(screen.X, screen.Y)
+end
+
+local function update(dt)
+    accumulator += dt
+    if accumulator >= 0.4 then
+        accumulator = 0
+        refreshRoles()
+    end
+
+    Camera = workspace.CurrentCamera
+    if not (enabled and Camera) then
+        for player in pairs(drawings) do hide(player) end
+        return
+    end
+
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player == LocalPlayer then
+            hide(player)
+            continue
+        end
+        local character = player.Character
+        local hrp = character and character:FindFirstChild("HumanoidRootPart")
+        local head = character and character:FindFirstChild("Head")
+        local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+        if not (hrp and head) or not humanoid or humanoid.Health <= 0 then
+            hide(player)
+            continue
+        end
+
+        local top = project(head.Position + Vector3.new(0, 0.6, 0))
+        local bottom = project(hrp.Position - Vector3.new(0, 2.6, 0))
+        if not top or not bottom or math.abs(bottom.Y - top.Y) < 6 then
+            hide(player)
+            continue
+        end
+
+        local role = roles[player] or "innocent"
+        local color = COLORS[role]
+        local height = math.abs(bottom.Y - top.Y)
+        local width = height * 0.45
+        local d = make(player)
+
+        d.box.Size = Vector2.new(width, height)
+        d.box.Position = Vector2.new(top.X - width / 2, top.Y)
+        d.box.Color = color
+        d.box.Visible = true
+
+        d.name.Visible = show_names
+        if show_names then
+            local distance = math.floor((hrp.Position - Camera.CFrame.Position).Magnitude)
+            local tag = LABELS[role]
+            d.name.Text = tag ~= ""
+                and string.format("%s [%s] %dm", player.Name, tag, distance)
+                or string.format("%s %dm", player.Name, distance)
+            d.name.Color = color
+            d.name.Position = Vector2.new(top.X, top.Y - 16)
+        end
+    end
+end
+
+-- =====================================================================
+-- liga tudo
+-- =====================================================================
+local window = Lib.window("KUROMI SENTINEL", "mm2 · esp por função")
+
+window.toggle("ESP ativo", true, function(state)
+    enabled = state
+end)
+
+window.toggle("Mostrar nomes", true, function(state)
+    show_names = state
+end)
+
+window.legend({
+    { text = "assassino (faca)", color = COLORS.murderer },
+    { text = "xerife (arma)", color = COLORS.sheriff },
+    { text = "inocente", color = COLORS.innocent },
+})
+
+local conn = RunService.RenderStepped:Connect(update)
+
+UIS.InputBegan:Connect(function(input, processed)
+    if processed then return end
+    if input.KeyCode == Enum.KeyCode.Insert then
+        enabled = not enabled
+    end
+end)
+
+-- rodada nova = personagem novo para você
+LocalPlayer.CharacterAdded:Connect(function()
+    roles = {}
+end)
+
+Players.PlayerRemoving:Connect(function(player)
+    local d = drawings[player]
+    if d then
+        d.box:Remove()
+        d.name:Remove()
+        drawings[player] = nil
+    end
+    roles[player] = nil
+end)
+
+local function shutdown()
+    conn:Disconnect()
+    for player, d in pairs(drawings) do
+        d.box:Remove()
+        d.name:Remove()
+        drawings[player] = nil
+    end
+    window.destroy()
+end
+
+return shutdown
